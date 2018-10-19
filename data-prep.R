@@ -41,6 +41,21 @@ act.table <- readRDS(here("data/import/activity_table.rds"))
 setnames(atus, "METFIPS", "ID")
 setnames(w.data, "station", "ID")
 
+# ADJUST WEATHER DATA
+# calculate Heat Index via NWS equations for weather data
+w.data[, heat := heat.index(t = TEMP, dp = DEWP, temperature.metric = "fahrenheit", output.metric = "fahrenheit", round = 1)]
+w.data[, temp := heat]
+w.data[heat < 80, temp := as.numeric(TEMP)] # use air temp if below 80 F
+
+# correct the datetime format
+w.data$DateTime <- ymd_hms(w.data$DateTime)
+
+# fill in missing hourly temps with avg for that hour in +/- 30 days
+w.data[, YrMthHr := paste0(year(w.data$DateTime),"-",month(w.data$DateTime),"-",hour(w.data$DateTime))] # unique character of year-month-hour for averages
+w.data[, mtemp.YrMthHr := mean(temp, na.rm = T), by = .(ID,YrMthHr)] # calculate mean for each metro for each unique year-month-hour combo
+w.data[is.na(temp), temp := mtemp.YrMthHr] # replace NAs w/ metro-year-month-hr mean
+
+# PREP ATUS DATA
 # Creates a date + time column as "YYYY-MM-DD HH:MM:SS TZ"
 atus$DateTimeStart <- ymd_hms(paste(atus$TUDIARYDATE,atus$TUSTARTTIM))
 atus$DateTimeEnd <- ymd_hms(paste(atus$TUDIARYDATE,atus$TUSTOPTIME))
@@ -53,18 +68,11 @@ atus$DateTimeMid.b <- atus$DateTimeEnd + (difftime(atus$DateTimeEnd, atus$DateTi
 # Remove activities with a missing timestamp
 atus <- atus[!is.na(DateTimeMid)]
 
-# hour start and end for matching
-atus$hr.s <- as.numeric(format(strptime(atus$DateTimeStart, format="%Y-%m-%d %H:%M:%S"), format="%H"))
-atus$hr.e <- as.numeric(format(strptime(atus$DateTimeEnd, format="%Y-%m-%d %H:%M:%S"), format="%H"))
-
 # income: HEFAMINC if year < 2010, HUFAMINC if year >= 2010
 atus$Income <- NA
 atus[HUFAMINC < 0, Income := atus$HEFAMINC]
 atus[HEFAMINC < 0, Income := atus$HUFAMINC]
 
-#~<@>~~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~#
-#    Match temps to activities by MSA      #
-#~<@>~~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~#
 
 # change timezone to be correct for each MSA (cause respondants reprot local time)
 # must split and assign because can't assign vectorized timezones (lame!)
@@ -75,20 +83,6 @@ for(a in 1:length(atus.l)){
   atus.l[[a]][, DateTimeEnd := with_tz(DateTimeEnd, tzone = unique(atus.l[[a]]$Timezone))] 
 }
 atus <- rbindlist(atus.l) # rebind list of DTs
-
-# calculate Heat Index via NWS equations for weather data
-w.data[, heat := heat.index(t = TEMP, dp = DEWP, temperature.metric = "fahrenheit", output.metric = "fahrenheit", round = 0)]
-w.data[, temp := heat]
-w.data[heat < 80, temp := as.numeric(TEMP)] # use air temp if below 80 F
-
-# correct the datetime format
-w.data$DateTime <- ymd_hms(w.data$DateTime)
-
-# fill in missing hourly temps with avg for that hour in +/- 30 days
-w.data[, YrMthHr := paste0(year(w.data$DateTime),"-",month(w.data$DateTime),"-",hour(w.data$DateTime))] # unique character of year-month-hour for averages
-w.data[, mtemp.YrMthHr := mean(temp, na.rm = T), by = .(ID,YrMthHr)] # calculate mean for each metro for each unique year-month-hour combo
-w.data[is.na(temp), temp := mtemp.YrMthHr] # replace NAs w/ metro-year-month-hr mean
-
 
 # Tag activity to be either Outside, Inside, or Intermediate
 
@@ -110,7 +104,7 @@ atus <- merge(atus, loc.table, by.x="TEWHERE", by.y="loc_code")
 atus <- merge(atus, act.table, by.x="TRCODEP", by.y="act_code")
 
 # assign master location code (loc_m)
-atus[, loc_m := as.integer(loc_m)][, loc_m := 4] # recode to master location code: loc_m. Assume that "unknown" (4) is default to be overwritten.
+atus[, loc_m := 4][, loc_m := as.integer(loc_m)] # recode to master location code: loc_m. Assume that "unknown" (4) is default to be overwritten.
 atus[loc_l == loc_a, loc_m := loc_l] # if the location and activity codes are equal, assign loc_m to be their value
 atus[loc_l == 4, loc_m := loc_a] # if location code is unknown, assign loc_m based on activity code
 atus[loc_a == 4, loc_m := loc_l] # if activity code is unknown, assign loc_m based on location code
@@ -121,15 +115,62 @@ atus[loc_a == 3 | loc_l == 3, loc_m := 3] # if activity or location code is outd
 atus[, outdoors := 0]
 atus[loc_m == 3, outdoors := 1]
 
-# match temperatures to outdoor activies 
+# prep for merging temps to atus data
 atus.o <- atus[outdoors == 1]
-atus.o[, DateTime := DateTimeMid] # create DateTime for matching
 w.data[, ID := as.integer(as.character(ID))] # set ID as integer to match
-w.data.m <- w.data[.(DateTime, ID, temp)] # only keep relevant vars
-setkey(atus.o, ID, DateTime)[, Date.Time := DateTimeMid] # setkey as ID and DateTime
-setkey(w.data.m, ID, DateTime)[, w.Date.Time := DateTime] # same but also include a new named DateTime var to keep in matched
-atus.m <- w.data.m[atus.o, roll = 'nearest']
-atus.m[, time.dif := difftime(DateTime, w.Date.Time, units = "mins")]
+w.data[, DateTimeStart := DateTime][, DateTimeMid.f := DateTime][, DateTimeMid := DateTime][, DateTimeMid.b := DateTime][, DateTimeEnd := DateTime]
+
+# match temperatures to outdoor activies by each of 5 time splits 
+w.data.m1 <- w.data[, .(ID, temp, DateTimeStart)] # only keep relevant vars
+setnames(w.data.m1, "temp", "tempStart") # rename to keep seperate after multiple merges
+setkey(atus.o, ID, DateTimeStart)
+setkey(w.data.m1, ID, DateTimeStart)[, w.Date.TimeStart := DateTimeStart] # same but also include a new named DateTime var to keep in matched
+atus.o <- w.data.m1[atus.o, roll = 'nearest']
+
+w.data.m2 <- w.data[, .(ID, temp, DateTimeMid.f)] # only keep relevant vars
+setnames(w.data.m2, "temp", "tempMid.f") # rename to keep seperate after multiple merges
+setkey(atus.o, ID, DateTimeMid.f)
+setkey(w.data.m2, ID, DateTimeMid.f)[, w.DateTimeMid.f := DateTimeMid.f] # same but also include a new named DateTime var to keep in matched
+atus.o <- w.data.m2[atus.o, roll = 'nearest']
+
+w.data.m3 <- w.data[, .(ID, temp, DateTimeMid)] # only keep relevant vars
+setnames(w.data.m3, "temp", "tempMid") # rename to keep seperate after multiple merges
+setkey(atus.o, ID, DateTimeMid)
+setkey(w.data.m3, ID, DateTimeMid)[, w.DateTimeMid := DateTimeMid] # same but also include a new named DateTime var to keep in matched
+atus.o <- w.data.m3[atus.o, roll = 'nearest']
+
+w.data.m4 <- w.data[, .(ID, temp, DateTimeMid.b)] # only keep relevant vars
+setnames(w.data.m4, "temp", "tempMid.b") # rename to keep seperate after multiple merges
+setkey(atus.o, ID, DateTimeMid.b)
+setkey(w.data.m4, ID, DateTimeMid.b)[, w.DateTimeMid.b := DateTimeMid.b] # same but also include a new named DateTime var to keep in matched
+atus.o <- w.data.m4[atus.o, roll = 'nearest']
+
+w.data.m5 <- w.data[, .(ID, temp, DateTimeEnd)] # only keep relevant vars
+setnames(w.data.m5, "temp", "tempEnd") # rename to keep seperate after multiple merges
+setkey(atus.o, ID, DateTimeEnd)
+setkey(w.data.m5, ID, DateTimeEnd)[, w.DateTimeEnd := DateTimeEnd] # same but also include a new named DateTime var to keep in matched
+atus.o <- w.data.m5[atus.o, roll = 'nearest']
+
+atus.o[, mid.time.dif := difftime(DateTimeMid, w.DateTimeMid, units = "mins")] # calculate time difference
+max(atus.o$mid.time.dif, na.rm = T)
+# Time difference of 515.5 mins 
+# NEED TO FIND FIX FOR HIGH GAP SAMPLES
+
+# calculate weighted temp and round 
+atus.o[, temp := signif((tempStart / 8) + (tempMid.f / 4) + (tempMid / 4) + (tempMid.b / 4) + (tempEnd / 8), 3)]
+
+# remove unneeded vars
+atus.o[, `:=`(tempStart = NULL, tempMid.f = NULL, tempMid = NULL, tempMid.b = NULL, tempEnd = NULL)]
+
+# bind back together, fill new cols with NAs
+atus <- rbind(atus.o, atus[outdoors == 0], fill = T)
+
+# remove more unneeded vars
+atus[, `:=`(DateTimeMid.b = NULL, DateTimeMid.f = NULL)]
+
+# save output, split into two files so it can sync to github
+saveRDS(atus[1:floor(.N/2)], here("data/export/atus1.rds"))
+saveRDS(atus[(floor(.N/2)+1):(.N)], here("data/export/atus2.rds"))
 
 
 # NOTES:
@@ -147,16 +188,3 @@ atus.m[, time.dif := difftime(DateTime, w.Date.Time, units = "mins")]
 #   TUFNWGTP is final ATUS weight. On atusresp or atussum. Uses 2006 methodology (may be outdated).
 #   Desirable variables not yet included in meta files include: TEAGE (atusrost or atussum), TUDIARYDAY and TUFNWGTP (atusresp or atussum).
 #   Therefore we will only load the Summary file to get these. 
-
-# test matching
-atus.t <- atus[ID %in% c(10740,46060)]
-atus.t[, DateTime := DateTimeMid]
-atus.t <- atus.t[, .(DateTime,ID)]
-w.data.t <- w.data[, .(DateTime,ID,TEMP)]
-w.data.t[, ID := as.integer(as.character(ID))]
-
-setkey(atus.t, ID, DateTime) # setkey as ID and DateTime
-setkey(w.data.t, ID, DateTime)[, t.Date.Time := DateTime] # same but also include a new named DateTime var to keep in matched
-
-atus.m <- w.data.t[atus.t, roll = 'nearest']
-atus.m[, time.dif := difftime(DateTime,t.Date.Time, units = "mins")]

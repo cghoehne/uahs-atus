@@ -19,20 +19,26 @@ if(length(new.packages)) install.packages(new.packages)
 # load packages
 lapply(list.of.packages, library, character.only = TRUE)
 
-# GENERAL APPROACH
-#   1. Load activity file, load ATUS-CPS file, and load CPS file. Match all three to get geocoded hourly activities. Filter to relevant MSAs.
-#   2. Load temperature files for relevant MSAs, match temps to activities by midpoint activity times.
-#   3. Load activity and location coding tables, match to meta file, and add a master activity code (1=in,2=int,3=out,4=unk).
-#   4. Load all other necessary files and match any other releveant variables (income, race, age, sex, work industry, etc.)
-
-#saveRDS(atus, "C:/Users/topher/Documents/GitHub Projects/uahs-atus/data/atus_filtered_0315.rds")
-
 # load ATUS data filtered and geocoded (to relevant MSAs) for years 2003 to 2015
-# file includes ATUS activity, ATUS CPS, and ATUS respondant, and original CPS file merged 
-atus <- readRDS(here("data/atus_geoclean_0315.rds"))
+# file includes relevant columns from ATUS activity, CPS, respondant, & summary and original CPS file 
+# merged on activities for all ATUS respondants in MSA sample
+atus1 <- readRDS(here("data/atus1_filtered_0315.rds"))
+atus2 <- readRDS(here("data/atus2_filtered_0315.rds"))
+atusnew <- rbind(atus1,atus2)
+rm(atus1,atus2)
+
+saveRDS(atus[1:floor(nrow(atus)/2)], here("data/atus1_filtered_0315.rds"))
+saveRDS(atus[(floor(nrow(atus)/2)+1):nrow(atus)], here("data/atus2_filtered_0315.rds"))
 
 # load list of metros for indexing
 metros <- readRDS(here("data/msa_list.rds"))
+
+# load binded NCDC weather data for metros
+w.data <- readRDS(here("data/ncdc_filtered_0315.rds"))
+
+# load atus location and acivity lookup tables
+loc.table <- readRDS(here("data/location_table.rds"))
+act.table <- readRDS(here("data/activity_table.rds"))
 
 # Recode activity start and stop time variables to minutes. 0 = 0:00:00, 1439.983 = 11:59:59.
 atus$STARTMIN <- 60 * 24 * as.numeric(times(atus$TUSTARTTIM))
@@ -73,13 +79,6 @@ atus$DewpC <- NA     # dewpt in C variable
 atus$YrMthDay <- format(strptime(atus$DateTimeMid, format="%Y-%m-%d %H:%M:%S"), format="%Y-%m-%d")
 atus$YrMth <- format(strptime(atus$DateTimeMid, format="%Y-%m-%d %H:%M:%S"), format="%Y-%m")
 
-# Drop non-useful columns. NOTE: if later columns are deemed useful, remerge from orginal data set(s).
-atus <- subset(atus, select=-c(TRWBELIG,SERIAL,PERNUM,HRMONTH,HRYEAR4,PULINENO,GEMETSTA,GESTFIPS,GTMETSTA,
-                                   HEPHONEO,HETELAVL,HETELHHD,HRINTSTA,HRMIS,HUBUSL1,HUBUSL2,HUBUSL3,HUBUSL4,
-                                   HUFINAL,HUINTTYP,PEERNRT,PEERNPER,PELKFTO,PELKLL1O,PRHERNAL,PRIOELG,PRWERNAL,
-                                   PTNMEMP1,PTNMEMP2,PULAY6M,PULAYAVR,PULKDK1,PULKDK2,PULKDK3,PULKDK4,PULKM2,
-                                   PULKM3,PULKM4,PULKM5,PULKM6,PULKPS1,PULKPS2,PULKPS3,PULKPS4))
-
 # Remove activities with a missing or invalid timestamp
 atus <- subset(atus, !is.na(atus$DateTimeMid))
 atus$hr.s <- as.numeric(format(strptime(atus$DateTimeStart, format="%Y-%m-%d %H:%M:%S"), format="%H"))
@@ -97,98 +96,61 @@ for(b in 1:nrow(atus)){
   } 
 }
 
-
-
 # remvoe any other extraneous variables
-atus$HUHHNUM.y <- NULL
-atus$HRSAMPLE.y <- NULL
-atus$HRSERSUF.y <- NULL
 
 
-# Remove unused data sets and clear up space  
-rm(list=setdiff(ls(), c("atus","metros")))
-gc()
-memory.limit(size = 56000)
+#~<@>~~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~#
+#    Match temps to activities by MSA      #
+#~<@>~~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~#
 
-#~<@>~~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~#
-#      STEP TWO: Match temps to activities by MSA      #
-#~<@>~~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~<@>~#
+# split atus data into dt list by MSA
+atus <- merge(atus, metros[, .(MSA_code,abbr)], by.x = "METFIPS", by.y = "MSA_code")
+atus <- as.data.table(atus)
+atus.l <- split(atus, METFIPS)
 
 
-# Divide activities data sets into seperate files for each region based on list. Names of df's will be "PHX", "LA", "NYC", etc.
-for(j in 1:dim(metros)[1]){  #
-  
-  # Create subset for specific MSA
-  dt <- as.data.table(subset(atus, METFIPS == metros$MSA_code[j]))
-  
-  # Assign dataframe name of MSA abbrevation
-  assign(metros$abbr[j], dt)
+# formating NCDC weather data
+w.data$YrMthDay <- format(strptime(w.data$DateTime, format="%Y-%m-%d %H:%M:%S"), format="%Y-%m-%d")
+w.data$hr <- as.numeric(format(strptime(w.data$DateTime, format="%Y-%m-%d %H:%M:%S"), format="%H"))
+
+# Calc relative humidity
+w.data$rh <- exp((17.625*w.data$DEWPC)/(243.04+w.data$DEWPC))/exp((17.625*w.data$TEMPC)/(243.04+w.data$TEMPC))
+
+# calculate Heat Index via NWS equations
+w.data$rh <- w.data$rh*100
+w.data$TEMP <- w.data$TEMPC * 9/5 + 32
+w.data$A <- -10.3 + 1.1*w.data$TEMP + 0.047*w.data$rh
+w.data$B <- (-42.379 + 2.04901523*w.data$TEMP
+         + 10.14333127*w.data$rh - 0.22475541*w.data$TEMP*w.data$rh 
+         - 0.00683783*w.data$TEMP*w.data$TEMP - 0.05481717*w.data$rh*w.data$rh 
+         + 0.00122874*w.data$TEMP*w.data$TEMP*w.data$rh + 0.00085282*w.data$TEMP*w.data$rh*w.data$rh 
+         - 0.00000199*w.data$TEMP*w.data$TEMP*w.data$rh*w.data$rh)
+
+w.data$heat <- ifelse(w.data$TEMP <= 40, w.data$TEMP,
+                  ifelse(w.data$A < 79, w.data$A,
+                         ifelse(w.data$rh <= 0.13 & w.data$TEMP >= 80 & w.data$TEMP <= 112, w.data$B - ((13-w.data$rh)/4)*SQRT((17-ABS(w.data$TEMP-95.))/17),
+                                ifelse(w.data$rh > 0.85 & w.data$TEMP >= 80 & w.data$TEMP <= 87, w.data$B +0.02*(w.data$rh - 85)*(87 - w.data$TEMP), w.data$B))))
+
+w.data$rh <- w.data$rh/100 # re-adjust relative humidity
+
+# use non adjustment if below 80 based on NWS 
+w.data$heat2 <- 0.5 * (w.data$TEMP + 61 + ((w.data$TEMP - 68)*1.2) + (w.data$rh*0.094))
+w.data$heat2 <- (w.data$TEMP + w.data$heat2)/2
+w.data$temp <- ifelse(w.data$heat2 >= 80, w.data$heat, w.data$heat2)   # use temp if app temp, use heat if heat index (because 'heat' only overwrote 'temp').
+w.data$temp <- (w.data$temp - 32) * 5/9 # convert to Celcius
+
+# fill in missing hourly temps with avg for that hour in +/- 30 days
+for(i in 1:dim(w.data)[1]){
+  if(is.na(w.data$temp[i])){
+    w.data.s <- subset(w.data, (as.Date(YrMthDay) > as.Date(YrMthDay[i]) - 15) & (as.Date(YrMthDay) < as.Date(YrMthDay[i]) + 15) & (hr[i] == hr))
+    w.data$temp[i] <- ifelse(!is.na(mean(w.data.s$temp, na.rm = T)), mean(w.data.s$temp, na.rm = T), NA)
+  } 
 }
 
 
-# Directory for loading temp files
-dir <- file.path("NCDC Global Hourly weather data","metros")
-
-# CODE FOR RBINDLIST OF FILES
-#temp.files <- list.files(here(path = "data/weather data/MCFCD/2017/Temp"), pattern="txt$", full.names = T) # full file path names
-#temp.names <- gsub(".txt", "", list.files(here(path = "data/weather data/MCFCD/2017/Temp"), pattern = "txt$", full.names = F)) # names (stations) of files
-#mcfcd.temp.data <- rbindlist(lapply(temp.files, fread), idcol = "station.id") # load all station data 
-#mcfcd.temp.data[, station.id := factor(station.id, labels = basename(temp.names))] # add station names to column 'station'
-
-
-# Load formatted temp files (formatting done in seperate script).
-for(k in 3){  #1:dim(metros)[1]
-  df <- read.csv(file = file.path(dir,metros$FileOut[k]), header = T)
-  df$YrMthDay <- format(strptime(df$DateTime, format="%Y-%m-%d %H:%M:%S"), format="%Y-%m-%d")
-  df$hr <- as.numeric(format(strptime(df$DateTime, format="%Y-%m-%d %H:%M:%S"), format="%H"))
-  
-  # Calc relative humidity
-  df$rh <- exp((17.625*df$DEWPC)/(243.04+df$DEWPC))/exp((17.625*df$TEMPC)/(243.04+df$TEMPC))
-  
-  # calculate Heat Index via NWS equations
-  df$rh <- df$rh*100
-  df$TEMP <- df$TEMPC * 9/5 + 32
-  df$A <- -10.3 + 1.1*df$TEMP + 0.047*df$rh
-  df$B <- (-42.379 + 2.04901523*df$TEMP
-           + 10.14333127*df$rh - 0.22475541*df$TEMP*df$rh 
-           - 0.00683783*df$TEMP*df$TEMP - 0.05481717*df$rh*df$rh 
-           + 0.00122874*df$TEMP*df$TEMP*df$rh + 0.00085282*df$TEMP*df$rh*df$rh 
-           - 0.00000199*df$TEMP*df$TEMP*df$rh*df$rh)
-  
-  df$heat <- ifelse(df$TEMP <= 40, df$TEMP,
-                    ifelse(df$A < 79, df$A,
-                           ifelse(df$rh <= 0.13 & df$TEMP >= 80 & df$TEMP <= 112, df$B - ((13-df$rh)/4)*SQRT((17-ABS(df$TEMP-95.))/17),
-                                  ifelse(df$rh > 0.85 & df$TEMP >= 80 & df$TEMP <= 87, df$B +0.02*(df$rh - 85)*(87 - df$TEMP), df$B))))
-  
-  df$rh <- df$rh/100 # re-adjust relative humidity
-  
-  # use non adjustment if below 80 based on NWS 
-  df$heat2 <- 0.5 * (df$TEMP + 61 + ((df$TEMP - 68)*1.2) + (df$rh*0.094))
-  df$heat2 <- (df$TEMP + df$heat2)/2
-  df$temp <- ifelse(df$heat2 >= 80, df$heat, df$heat2)   # use temp if app temp, use heat if heat index (because 'heat' only overwrote 'temp').
-  df$temp <- (df$temp - 32) * 5/9 # convert to Celcius
-  
-  # fill in missing hourly temps with avg for that hour in +/- 30 days
-  for(i in 1:dim(df)[1]){
-    if(is.na(df$temp[i])){
-      df.s <- subset(df, (as.Date(YrMthDay) > as.Date(YrMthDay[i]) - 15) & (as.Date(YrMthDay) < as.Date(YrMthDay[i]) + 15) & (hr[i] == hr))
-      df$temp[i] <- ifelse(!is.na(mean(df.s$temp, na.rm = T)), mean(df.s$temp, na.rm = T), NA)
-    } 
-  }
-  dt <- as.data.table(df)
-  assign(paste0("tmp",metros$MSA_code[k]), dt)
-}
-
-
-# Remove unused data sets and clear up space  
-rm(act,a,b,df,j,k,t.difs,z)          # remove temporary objects by name
-#rm(list = ls(pattern = "^tmp"))      # remove rest of temporary objects by removing all that start with "tmp"
-gc()
-
-
-  #$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%
- #$%     STEP THREE: Master Recode of Activities    #$%
-#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%
+  #$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%
+ #$%   Master Recode of Activities   #$%
+#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%#$%
 
 # Tag activity to be either Outside, Inside, or Intermediate
 
@@ -217,12 +179,6 @@ gc()
   #assign(metros$abbr[a], df)
 #}
 
-# create output directory
-dir.out <- file.path("UAHS Outputs","metros coded")
-
-# load location and activity code files
-loc.table <- read.csv("X:/Dropbox (ASU)/Data and Tools/ATUS/2003-2015/location_codes.csv", header = T)
-act.table <- read.csv("X:/Dropbox (ASU)/Data and Tools/ATUS/2003-2015/activity_codes.csv", header = T)
 
 # Loop through metro files, assign generalized indoor/outdoor activity codes, then assign temps based on indoor/outdoor activity --- dim(metros)[1]
 print(Sys.time())
@@ -347,10 +303,6 @@ t9 <- Sys.time()
 
 difftime(t9,t0, units = "hours") 
                              
-##############
-# STEP FOUR #
-############
-
 # NOTES:
 #   The person selected to be interviewed for ATUS (i.e. the respondent) is always TULINENO = 1 where it exists.
 #   Because only one person is interviewed per household, each TUCASEID on the Activity, Respondent, and Summary file identifies a unique respondent.
@@ -364,10 +316,6 @@ difftime(t9,t0, units = "hours")
 #   TEAGE is age (atusrost, atussum). Use over PRTAGE (age on atuscps).
 #   TESEX (atusrost, atussum) or PRSEX (atuscps) is sex. Use either.
 #   TUFNWGTP is final ATUS weight. On atusresp or atussum. Uses 2006 methodology (may be outdated).
-
 #   Desirable variables not yet included in meta files include: TEAGE (atusrost or atussum), TUDIARYDAY and TUFNWGTP (atusresp or atussum).
 #   Therefore we will only load the Summary file to get these. 
-
-
-################################################################
 

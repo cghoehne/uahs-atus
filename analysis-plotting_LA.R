@@ -35,6 +35,21 @@ loadfonts(device = "win")
 options(scipen = 999) # force R not to use scientific notation
 memory.limit(size=56000) # increase memory limit
 
+# load cleaned ATUS data
+atus1 <- readRDS(here("data/export/atus1.rds"))
+atus2 <- readRDS(here("data/export/atus2.rds"))
+atus <- rbind(atus1,atus2)
+rm(atus1,atus2)
+
+# load ATUS weights
+atuswgts1 <- readRDS(here("data/import/atuswgts1.rds"))
+atuswgts2 <- readRDS(here("data/import/atuswgts2.rds"))
+atuswgts3 <- readRDS(here("data/import/atuswgts3.rds"))
+atuswgts4 <- readRDS(here("data/import/atuswgts4.rds"))
+atuswgts <- rbind(atuswgts1,atuswgts2,atuswgts3,atuswgts4)
+rm(atuswgts1,atuswgts2,atuswgts3,atuswgts4)
+names(atuswgts)[names(atuswgts) == 'TUCASEID'] <- 'id' # change id col to match rest 
+
 # Load list of MSAs
 metros <-  read.csv("NCDC Global Hourly weather data/20180529_metros_list.csv", header = T, stringsAsFactors = F)
 metros$Name <- gsub(" Metropolitan Statistical Area", "", metros$Name) # format name to remove "Metro..."
@@ -57,9 +72,35 @@ rm(msa.pop.cz,not.msa.list)  # remove extra
 
 metros.cz <- aggregate(respop72016~BA.Climate.Zone,data=metros,FUN=sum)
 
-# load full weights for atus
-atuswgts <- read.table("ATUS/2003-2015/atuswgts_0315/atuswgts_0315.dat",header = TRUE,sep = ",")     # ATUS Replicate Weights file
-names(atuswgts)[names(atuswgts) == 'TUCASEID'] <- 'id'
+#atuswgts <- as.data.table(atuswgts)
+#r.s <- nrow(atuswgts[1:floor(.N/4)])
+#saveRDS(atuswgts[1:(r.s)], here("data/import/atuswgts1.rds"))
+#saveRDS(atuswgts[(r.s+1):(r.s*2)], here("data/import/atuswgts2.rds"))
+#saveRDS(atuswgts[(r.s*2+1):(r.s*3)], here("data/import/atuswgts3.rds"))
+#saveRDS(atuswgts[(r.s*3+1):(.N)], here("data/import/atuswgts4.rds"))
+
+
+
+# split data.table ***WORKING***
+#dt.split.saveRDS <- function(dt, splits){
+#  if(class(dt) != "data.table") {
+#    dt <- as.data.table(dt)
+#  }
+#  r <- floor(dt[, .N]/splits)
+#}
+
+# function to return p value
+lmp <- function (modelobject) {
+  if (class(modelobject) != "lm") stop("Not an object of class 'lm' ")
+  f <- summary(modelobject)$fstatistic
+  p <- pf(f[1],f[2],f[3],lower.tail=F)
+  attributes(p) <- NULL
+  return(p)
+}
+
+  
+
+
 
 # load activity intensity (MET) files
 met.m <- read.csv("ATUS/2003-2015/MET_master.csv", header = T)

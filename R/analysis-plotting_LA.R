@@ -34,6 +34,7 @@ lapply(list.of.packages, library, character.only = TRUE)
 loadfonts(device = "win")
 options(scipen = 999) # force R not to use scientific notation
 memory.limit(size=56000) # increase memory limit
+my.font <- "Calibri Light"
 
 # load cleaned ATUS data
 #atus1 <- readRDS(here("data/export/atus1.rds"))
@@ -42,16 +43,17 @@ memory.limit(size=56000) # increase memory limit
 #rm(atus1,atus2)
 
 # load ATUS weights
-#atuswgts1 <- readRDS(here("data/import/atuswgts1.rds"))
-#atuswgts2 <- readRDS(here("data/import/atuswgts2.rds"))
-#atuswgts3 <- readRDS(here("data/import/atuswgts3.rds"))
-#atuswgts4 <- readRDS(here("data/import/atuswgts4.rds"))
-#atuswgts <- rbind(atuswgts1,atuswgts2,atuswgts3,atuswgts4)
-#rm(atuswgts1,atuswgts2,atuswgts3,atuswgts4)
-#names(atuswgts)[names(atuswgts) == 'TUCASEID'] <- 'id' # change id col to match rest 
+atuswgts1 <- readRDS(here("data/import/atuswgts1.rds"))
+atuswgts2 <- readRDS(here("data/import/atuswgts2.rds"))
+atuswgts3 <- readRDS(here("data/import/atuswgts3.rds"))
+atuswgts4 <- readRDS(here("data/import/atuswgts4.rds"))
+atuswgts <- rbind(atuswgts1,atuswgts2,atuswgts3,atuswgts4)
+rm(atuswgts1,atuswgts2,atuswgts3,atuswgts4)
+names(atuswgts)[names(atuswgts) == 'TUCASEID'] <- 'id' # change id col to match rest 
 
 # ** TEMP IMPORT OF OLD WORKSPACE WHILE UPDATING CODE ** #
 load(here("data/temp/old_workspace.RData"))
+#save.image(here("data/temp/old_workspace.RData"))
 ####
 
 # Load list of MSAs
@@ -593,10 +595,18 @@ act.t1 <- c('1'="Personal Care",
             '18'="Traveling",
             '50'="Undefined")
 
+
+
 # create a meta dataframe that has all Metro observations and add in replicate weights for err calcs
 meta <- do.call(rbind, lapply(paste(metros$abbr), get) )
 meta <- merge(meta, metros[,c('sprawl','abbr')], by.x = "msa.f", by.y = "abbr", all.x = T)
-meta.s <- meta[,c('id','MET.dur','MET.exp27','exp27','MET',"TRCODEP","TUACTDUR24",'temp','cuttemp','code.f2','weight','age.f2','age','race.f2','sex.f','poverty.f','elderly','black_white','outdoors','sprawl','income.f','date','season','msa.f')]
+
+# create deg F temp and codes
+meta$temp.F <- meta$temp * (9/5) + 32
+meta$cuttemp.F <- cut(meta$temp.F,c(-Inf, seq(from = 0, to = 100, by = 10),Inf))
+meta$cuttemp.F <- revalue(meta$cuttemp.F, c("(-Inf,0]"="Below 0", "(0,10]"="0 to 10", "(10,20]"="10 to 20", "(20,30]"="20 to 30", "(30,40]"="30 to 40","(40,50]"="40 to 50", "(50,60]"="50 to 60", "(60,70]"="60 to 70", "(70,80]"="70 to 80","(80,90]"="80 to 90","(90,100]"="90 to 100","(100, Inf]"="Above 100"))  
+
+meta.s <- meta[,c('id','MET.dur','MET.exp27','exp27','MET',"TRCODEP","TUACTDUR24",'temp','cuttemp','code.f2','weight','age.f2','age','race.f2','sex.f','poverty.f','elderly','black_white','outdoors','sprawl','income.f','date','season','msa.f','temp.F','cuttemp.F')]
 meta.s <- merge(meta.s,atuswgts, by = "id")
 
 meta.s$exp27[is.na(meta.s$exp27)] <- 0
@@ -662,11 +672,12 @@ log10_minor_break = function (...){function(x) {
 
 # boxplot cuttemp color palette
 cols <- c("21 to 27" = "grey75", "27 to 33" = "#FFFE00", "33 to 39" = "#FF6701", "Above 39" = "#CC0001")
+col.f <- c("70 to 80" = "grey75", "80 to 90" = "#FFFE00", "90 to 100" = "#FF6701", "Above 100" = "#CC0001")
 
 # create population data for meta.f
 # create blank df
-meta.f.pop <- meta.f[,c('id','MET.dur','cuttemp','code.f2','weight','elderly','black_white','poverty.f','sex.f','msa.f')]
-meta.f2 <- meta.f[,c('id','MET.dur','cuttemp','code.f2','weight','elderly','black_white','poverty.f','sex.f','msa.f')]
+meta.f.pop <- meta.f[,c('id','MET.dur','cuttemp','code.f2','weight','elderly','black_white','poverty.f','sex.f','msa.f','temp.F','cuttemp.F')]
+meta.f2 <- meta.f[,c('id','MET.dur','cuttemp','code.f2','weight','elderly','black_white','poverty.f','sex.f','msa.f','temp.F','cuttemp.F')]
 
 #x <- 0
 #y <- 0
@@ -678,6 +689,8 @@ meta.f2 <- meta.f[,c('id','MET.dur','cuttemp','code.f2','weight','elderly','blac
 #}
 
 # MET-ACTIVITY FIGURE 
+
+
 
 # add labelers for number of observations by cuttemp and acitvity code.f2 and for percent of observations outdoors
 
@@ -693,8 +706,8 @@ meta.f$code.f3 <- factor(meta.f$code.f3)
 #meta.f$code.f3 <- factor(meta.f$code.f3, levels = c(1:6),labels = c("Care for Others", "Household","Social/Leisure","Sports & Rec","Travel","Other"))
 
 
-act.t <- plyr::ddply(.data=meta.f.pop2[!is.na(meta.f.pop2$MET.dur) & (meta.f.pop2$msa.f == "LA" | meta.f.pop2$msa.f == "RIV"),], 
-                 .(cuttemp,code.f3), 
+act.t <- plyr::ddply(.data=meta.f.pop2[!is.na(meta.f.pop2$MET.dur) & meta.f.pop2$temp.F > 80,], 
+                 .(cuttemp.F,code.f3), 
                  plyr::summarize, 
                  n=length(!is.na(code.f3)))
 
@@ -702,44 +715,44 @@ act.t$n <- paste("n =",act.t$n)
 act.t <- act.t[!is.na(act.t$code.f3),]
 
 # create activity x MET-time by cuttemp plot
-p26.1 <- ggplot(data=meta.f.pop2[!is.na(meta.f.pop2$MET.dur) & (meta.f.pop2$msa.f == "LA" | meta.f.pop2$msa.f == "RIV") & !is.na(meta.f.pop2$code.f3),], aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
+p26.1 <- ggplot(data=meta.f.pop2[!is.na(meta.f.pop2$MET.dur) & !is.na(meta.f.pop2$code.f3) & meta.f.pop2$temp.F > 80,], aes(x=cuttemp.F, y=MET.dur, fill=cuttemp.F)) +
   geom_boxplot(alpha = 0.7,outlier.size = 0.1) +
   #geom_jitter(aes(group=cut_width(TRTIER1P, 1)), colour = line, size = .7) +
   scale_y_log10(name = "Activity Intensity-time (MET-min)", labels = fmt_dcimals(1), limits=c(1,5000), breaks=c(1,5,10,50,100,500,1000,5000), minor_breaks=log10_minor_break()) + 
   #scale_y_continuous(name = "Exposure (deg-min above 27 deg C)", limits=c(0,6000), breaks = c(0,1000,2000,3000,4000,5000,6000)) + 
-  scale_x_discrete(name = "Apparent Temperature (°C)") +
+  scale_x_discrete(name = "Heat Index (°F, binned)") +
   ggtitle("") +
   theme_bw() +
-  geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  geom_text(data=act.t, aes(x=cuttemp.F, y=1.1, label=n), family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
             #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   facet_grid(.~code.f3) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
         axis.title.y = element_text(size = 14),
         axis.title.x = element_text(size = 14, vjust = -0.9),
-        text = element_text(size=12, family="Times New Roman"),
+        text = element_text(size=12, family=my.font),
         axis.text.y=element_text(color="black",size=11),
         axis.text.x=element_text(color="black",size=11,angle=90,hjust=0.95,vjust=0.5),
         panel.grid.major.y = element_line(colour="gray80"),
         panel.grid.minor.y = element_line(colour="gray85"),
         panel.grid.major.x = element_blank(),
-        strip.text.x = element_text(size = 8),
+        strip.text.x = element_text(size = 6, face = "bold"),
         legend.position="none") +
   #scale_fill_brewer(palette = "Set1", direction = 1)
-  scale_fill_manual(values = cols)
+  scale_fill_manual(values = col.f)
 p26.1
 
-ggsave(here("data/export/MET_exp_by_act_bxplt_300_weighted_LA_RIV_only.tiff"), p26.1, device = "tiff",
-       scale = 1, width = 6.5, height = 5, dpi = 300,units = "in")
+ggsave(here("data/export/MET_exp_by_act_bxplt_300_weighted_F.tiff"), p26.1, device = "tiff",
+       scale = 1, width = 5, height = 5, dpi = 300,units = "in")
 
 ### SOCIO PLOT (ELDERLY, BLACKS, GENDER) ###
 #############################################
 
 # ELDERLY VS NON ELDERLY
 # labler
-n.soc1 <- plyr::ddply(.data=meta.f[!is.na(meta.f$MET.dur) & (meta.f$msa.f == "LA" | meta.f$msa.f == "RIV"),], 
-                  .(cuttemp,elderly), 
+n.soc1 <- plyr::ddply(.data=meta.f[!is.na(meta.f$MET.dur) & meta.f$temp.F > 80,], 
+                  .(cuttemp.F,elderly), 
                 plyr::summarize, 
                   n=length(elderly))
 
@@ -747,21 +760,21 @@ n.soc1$n <- paste("n =",n.soc1$n)
 n.soc1 <- n.soc1[!is.na(n.soc1$elderly),]
 
 # create activity x MET-time by cuttemp plot
-p27.1 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$MET.dur) & (meta.f.pop$msa.f == "LA" | meta.f.pop$msa.f == "RIV"),], aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
+p27.1 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$MET.dur) & meta.f.pop$temp.F > 80,], aes(x=cuttemp.F, y=MET.dur, fill=cuttemp.F)) +
   geom_boxplot(alpha = 0.7,outlier.size = 0.1) +
   #geom_jitter(aes(group=cut_width(TRTIER1P, 1)), colour = line, size = .7) +
   scale_y_log10(name = "Activity Intensity-time (MET-min)", labels = fmt_dcimals(1), limits=c(1,5000), breaks=c(1,5,10,50,100,500,1000,5000), minor_breaks=log10_minor_break()) + 
   #scale_y_continuous(name = "Exposure (deg-min above 27 deg C)", limits=c(0,6000), breaks = c(0,1000,2000,3000,4000,5000,6000)) + 
   #scale_x_discrete(name = "Apparent Temperature (deg C)") +
   theme_bw() +
-  geom_text(data=n.soc1, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
-            colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=n.soc1, aes(x=cuttemp.F, y=1.1, label=n), family = my.font,
+  #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=.25) +
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   facet_grid(.~elderly) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
         #plot.margin = unit(c(0,2,0,2),"cm"),
-        text = element_text(size=12, family="Times New Roman"),
+        text = element_text(size=12, family=my.font),
         axis.title.x = element_blank(),
         axis.title.y = element_blank(),
         axis.text.y=element_text(color="black",size=11),
@@ -769,37 +782,37 @@ p27.1 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$MET.dur) & (meta.f.pop$msa.f =
         panel.grid.major.y = element_line(colour="gray80"),
         panel.grid.minor.y = element_line(colour="gray85"),
         panel.grid.major.x = element_blank(),
-        strip.text.x = element_text(size = 8),
+        strip.text.x = element_text(size = 8, face = "bold"),
         legend.position="none") +
   #scale_fill_brewer(palette = "Set1", direction = 1)
-  scale_fill_manual(values = cols)
+  scale_fill_manual(values = col.f)
 
 # BLACK VS NON BLACK
 # labler
-n.soc2 <- plyr::ddply(.data=meta.f[!is.na(meta.f$MET.dur) & (meta.f$msa.f == "LA" | meta.f$msa.f == "RIV"),], 
-                .(cuttemp,black_white), 
+n.soc2 <- plyr::ddply(.data=meta.f[!is.na(meta.f$MET.dur) & meta.f$temp.F > 80,], 
+                .(cuttemp.F,black_white), 
                 plyr::summarize, 
                 n=length(black_white))
 
 n.soc2$n <- paste("n =",n.soc2$n)
 n.soc2 <- n.soc2[!is.na(n.soc2$black_white),]
 
-# create activity x MET-time by cuttemp plot
-p27.2 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$MET.dur) & (meta.f.pop$msa.f == "LA" | meta.f.pop$msa.f == "RIV"),], aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
+# create activity x MET-time by cuttemp plot 
+p27.2 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$MET.dur) & meta.f.pop$temp.F > 80,], aes(x=cuttemp.F, y=MET.dur, fill=cuttemp.F)) +
   geom_boxplot(alpha = 0.7,outlier.size = 0.1) +
   #geom_jitter(aes(group=cut_width(TRTIER1P, 1)), colour = line, size = .7) +
   scale_y_log10(labels = fmt_dcimals(1), limits=c(1,5000), breaks=c(1,5,10,50,100,500,1000,5000), minor_breaks=log10_minor_break()) + 
   #scale_y_continuous(name = "Exposure (deg-min above 27 deg C)", limits=c(0,6000), breaks = c(0,1000,2000,3000,4000,5000,6000)) + 
   scale_x_discrete(name = "Apparent Temperature (deg C)") +
   theme_bw() +
-  geom_text(data=n.soc2, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
-            colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=n.soc2, aes(x=cuttemp.F, y=1.1, label=n), family = my.font,
+  #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=.25) +
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   facet_grid(.~black_white) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
         #plot.margin = unit(c(0,2,0,2),"cm"),
-        text = element_text(size=12, family="Times New Roman"),
+        text = element_text(size=12, family=my.font),
         axis.title.x = element_blank(),
         axis.title.y = element_blank(),
         axis.text.y=element_text(color="black",size=11),
@@ -807,15 +820,15 @@ p27.2 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$MET.dur) & (meta.f.pop$msa.f =
         panel.grid.major.y = element_line(colour="gray80"),
         panel.grid.minor.y = element_line(colour="gray85"),
         panel.grid.major.x = element_blank(),
-        strip.text.x = element_text(size = 8),
+        strip.text.x = element_text(size = 8, face = "bold"),
         legend.position="none") +
   #scale_fill_brewer(palette = "Set1", direction = 1)
-  scale_fill_manual(values = cols)
+  scale_fill_manual(values = col.f)
 
 # MALE VS FEMALE
 # labler
-n.soc3 <- plyr::ddply(.data=meta.f[!is.na(meta.f$MET.dur) & (meta.f$msa.f == "LA" | meta.f$msa.f == "RIV"),], 
-                .(cuttemp,sex.f), 
+n.soc3 <- plyr::ddply(.data=meta.f[!is.na(meta.f$MET.dur) & meta.f$temp.F > 80,], 
+                .(cuttemp.F,sex.f), 
                 plyr::summarize, 
                 n=length(sex.f))
 
@@ -823,21 +836,21 @@ n.soc3$n <- paste("n =",n.soc3$n)
 n.soc3 <- n.soc3[!is.na(n.soc3$sex.f),]
 
 # create activity x MET-time by cuttemp plot
-p27.3 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$sex.f) & (meta.f.pop$msa.f == "LA" | meta.f.pop$msa.f == "RIV"),], aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
+p27.3 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$sex.f) & meta.f.pop$temp.F > 80,], aes(x=cuttemp.F, y=MET.dur, fill=cuttemp.F)) +
   geom_boxplot(alpha = 0.7,outlier.size = 0.1) +
   #geom_jitter(aes(group=cut_width(TRTIER1P, 1)), colour = line, size = .7) +
   scale_y_log10(labels = fmt_dcimals(1), limits=c(1,5000), breaks=c(1,5,10,50,100,500,1000,5000), minor_breaks=log10_minor_break()) + 
   #scale_y_continuous(name = "Exposure (deg-min above 27 deg C)", limits=c(0,6000), breaks = c(0,1000,2000,3000,4000,5000,6000)) + 
   #scale_x_discrete(name = "Apparent Temperature (deg C)") +
   theme_bw() +
-  geom_text(data=n.soc3, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
-            colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=n.soc3, aes(x=cuttemp.F, y=1.1, label=n), family = my.font,
+  #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=.25) +
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   facet_grid(.~sex.f) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
         #plot.margin = unit(c(0,2,0,2),"cm"),
-        text = element_text(size=12, family="Times New Roman"),
+        text = element_text(size=12, family=my.font),
         axis.title.x = element_blank(),
         axis.title.y = element_blank(),
         axis.text.y=element_text(color="black",size=11),
@@ -845,20 +858,20 @@ p27.3 <- ggplot(data=meta.f.pop[!is.na(meta.f.pop$sex.f) & (meta.f.pop$msa.f == 
         panel.grid.major.y = element_line(colour="gray80"),
         panel.grid.minor.y = element_line(colour="gray85"),
         panel.grid.major.x = element_blank(),
-        strip.text.x = element_text(size = 8),
+        strip.text.x = element_text(size = 8, face = "bold"),
         legend.position="none") +
   #scale_fill_brewer(palette = "Set1", direction = 1)
-  scale_fill_manual(values = cols)
+  scale_fill_manual(values = col.f)
 
 require(gridExtra)
 socio.plot <- grid.arrange(p27.1,p27.2,p27.3, ncol=3, 
-                           bottom=textGrob("Apparent Temperature (°C)", gp=gpar(fontface="plain",fontfamily="Times New Roman",fontsize=14)),
-                           left=textGrob("Activity Intensity-time (MET-min)", gp=gpar(fontface="plain",fontfamily="Times New Roman",fontsize=14), rot = 90))
+                           bottom=textGrob("Heat Index (°F, binned)", gp=gpar(fontface="plain",fontfamily=my.font,fontsize=14)),
+                           left=textGrob("Activity Intensity-time (MET-min)", gp=gpar(fontface="plain",fontfamily=my.font,fontsize=14), rot = 90))
 
-socio.plot.an <- arrangeGrob(socio.plot, top = textGrob("(a)                                            (b)                                            (c)                 ", gp=gpar(fontfamily = "Times New Roman")))
+socio.plot.an <- arrangeGrob(socio.plot, top = textGrob("(a)                                            (b)                                            (c)                 ", gp=gpar(fontfamily = my.font)))
  
-ggsave(here("data/export/MET_exp_socio_bxplt_300_weighted_LA_RIV_only.tiff"), socio.plot.an, device = "tiff",
-       scale = 1, width = 6.5, height = 5, dpi = 300,units = "in")
+ggsave(here("data/export/MET_exp_socio_bxplt_300_weighted_F.tiff"), socio.plot.an, device = "tiff",
+       scale = 1, width = 5.5, height = 4, dpi = 300,units = "in")
 
 
 # percenile summary of socio boxplots
@@ -1040,11 +1053,11 @@ p40.1 <- ggplot(data=meta.pop[!is.na(meta.pop$MET.exp27),], aes(x=msa.f2.1, y=ME
   ggtitle("") +
   labs(fill="Climate Zone") +
   theme_bw() +
-  geom_text(data=n.msa.t, aes(x=msa.f, y=75000, label=n),family = "Times New Roman",
+  geom_text(data=n.msa.t, aes(x=msa.f, y=75000, label=n),family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 0, size = 2.5, vjust=.3) +
   #facet_grid(.~cz.f2) +
-  theme(plot.title = element_text(size = 11, family = "Times New Roman"),
-        text = element_text(size=11, family="Times New Roman"),
+  theme(plot.title = element_text(size = 11, family = my.font),
+        text = element_text(size=11, family=my.font),
         #axis.title = element_text(face="bold"),
         legend.text = element_text(size=9.5),
         legend.position = c(.45,-.16),
@@ -1099,13 +1112,13 @@ p40.1.keeps <- ggplot(data=meta.pop.keep[!is.na(meta.pop.keep$MET.exp27),], aes(
   ggtitle("") +
   labs(fill="Climate Zone") +
   theme_bw() +
-  geom_text(data=msa.keeps, aes(x=abbr, y=75000, label=n_eq),family = "Times New Roman",
+  geom_text(data=msa.keeps, aes(x=abbr, y=75000, label=n_eq),family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 0, size = 2.5, vjust=.3) +
-  #geom_text(data=msa.keeps, aes(x=abbr, y=75000, label=p_val),family = "Times New Roman",
+  #geom_text(data=msa.keeps, aes(x=abbr, y=75000, label=p_val),family = my.font,
    #         colour="black", inherit.aes=FALSE, parse=FALSE, angle = 0, size = 2.5, vjust=.3) +
   #facet_grid(.~cz.f2) +
-  theme(plot.title = element_text(size = 11, family = "Times New Roman"),
-        text = element_text(size=11, family="Times New Roman"),
+  theme(plot.title = element_text(size = 11, family = my.font),
+        text = element_text(size=11, family=my.font),
         #axis.title = element_text(face="bold"),
         legend.text = element_text(size=9.5),
         legend.position = c(.45,-.16),
@@ -1255,13 +1268,13 @@ p27.9 <- ggplot(data=meta.f.p2, aes(x=age.all, y=MET.exp27)) +
   scale_x_discrete(name = "Age", limits = rev(levels(!is.na(meta.f.p2$age.all)))) +
   ggtitle("ATUS Metropolitan Outdoor MET-Exposure by Age Group") +
   theme_bw() +
-  #geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = my.font,
   #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   #facet_grid(.~code.f2) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
-        text = element_text(size=12, family="Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
+        text = element_text(size=12, family=my.font),
         axis.text.y=element_text(color="black",size=10),
         axis.text.x=element_text(color="black",size=11,angle=90,hjust=0.95,vjust=0.5),
         panel.grid.major.y = element_line(colour="gray80"),
@@ -1284,13 +1297,13 @@ p28.9 <- ggplot(data=meta.f.p, aes(x=race.f2, y=MET.exp27)) +
   scale_x_discrete(name = "Race") +
   ggtitle("ATUS Metropolitan Outdoor MET-Exposure by Race Group") +
   theme_bw() +
-  #geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = my.font,
   #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   #facet_grid(.~code.f2) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
-        text = element_text(size=12, family="Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
+        text = element_text(size=12, family=my.font),
         axis.title.y = element_text(size = 10),
         axis.text.y=element_text(color="black",size=11),
         axis.text.x=element_text(color="black",size=11,angle=90,hjust=0.95,vjust=0.5),
@@ -1312,13 +1325,13 @@ p29.9 <- ggplot(data=meta.f.p[!is.na(meta.f.p$income.f),], aes(x=income.f, y=MET
   scale_x_discrete(name = "Household Income") +
   ggtitle("ATUS Metropolitan Outdoor MET-Exposure by Income Group") +
   theme_bw() +
-  #geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=1.1, label=n), family = my.font,
   #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   #facet_grid(.~code.f2) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
-        text = element_text(size=12, family="Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
+        text = element_text(size=12, family=my.font),
         axis.title.y = element_text(size = 10),
         axis.text.y=element_text(color="black",size=11),
         axis.text.x=element_text(color="black",size=11,angle=90,hjust=0.95,vjust=0.5),
@@ -1437,13 +1450,13 @@ p27 <- ggplot(meta.f2, aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
   scale_x_discrete(name = "Apparent Temperature (deg C)") +
   ggtitle("ATUS Metropolitan Outdoor Exposure by Age Group") +
   theme_bw() +
-  geom_text(data=age.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  geom_text(data=age.t, aes(x=cuttemp, y=1.1, label=n), family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=0.25) +
-  #geom_text(data=age.t, aes(x=cuttemp, y=1300, label=p), family = "Times New Roman",
+  #geom_text(data=age.t, aes(x=cuttemp, y=1300, label=p), family = my.font,
   #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=1) +
   facet_grid(.~age.f2) +
-  theme(plot.title = element_text(size = 11, family = "Times New Roman"),
-        text = element_text(size=12, family="Times New Roman"),
+  theme(plot.title = element_text(size = 11, family = my.font),
+        text = element_text(size=12, family=my.font),
         axis.text.y=element_text(color="black",size=11),
         axis.text.x=element_text(color="black",size=11,angle=90,hjust=0.95,vjust=0.5),
         panel.grid.major.y = element_line(colour="gray70"),
@@ -1483,13 +1496,13 @@ p28 <- ggplot(data=meta.f3, aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
   scale_x_discrete(name = "Apparent Temperature (deg C)") +
   ggtitle("ATUS Metropolitan Outdoor Exposure by Income Group") +
   theme_bw() +
-  geom_text(data=income.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  geom_text(data=income.t, aes(x=cuttemp, y=1.1, label=n), family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=0) +
-  #geom_text(data=income.t, aes(x=cuttemp, y=1300, label=p), family = "Times New Roman",
+  #geom_text(data=income.t, aes(x=cuttemp, y=1300, label=p), family = my.font,
   #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=1) +
   facet_grid(.~income.f) +
-  theme(plot.title = element_text(size = 11, family = "Times New Roman"),
-        text = element_text(size=12, family="Times New Roman"),
+  theme(plot.title = element_text(size = 11, family = my.font),
+        text = element_text(size=12, family=my.font),
         axis.text.y=element_text(color="black",size=10),
         axis.text.x=element_text(color="black",size=10,angle=90,hjust=0.95,vjust=0.5),
         panel.grid.major.y = element_line(colour="gray70"),
@@ -1528,13 +1541,13 @@ p29 <- ggplot(data=meta.f, aes(x=cuttemp, y=MET.dur, fill=cuttemp)) +
   scale_x_discrete(name = "Apparent Temperature (deg C)") +
   ggtitle("ATUS Metropolitan Outdoor Exposure by Race") +
   theme_bw() +
-  geom_text(data=race.t, aes(x=cuttemp, y=1.1, label=n),family = "Times New Roman",
+  geom_text(data=race.t, aes(x=cuttemp, y=1.1, label=n),family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=.25) +
-  #geom_text(data=race.t, aes(x=cuttemp, y=1300, label=p), family = "Times New Roman",
+  #geom_text(data=race.t, aes(x=cuttemp, y=1300, label=p), family = my.font,
   #          colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.2, vjust=1) +
   facet_grid(.~race.f2) +
-  theme(plot.title = element_text(size = 11, family = "Times New Roman"),
-        text = element_text(size=11, family="Times New Roman"),
+  theme(plot.title = element_text(size = 11, family = my.font),
+        text = element_text(size=11, family=my.font),
         #axis.title = element_text(face="bold"),
         axis.text.y=element_text(color="black",size=10),
         axis.text.x=element_text(color="black",size=10,angle=90,hjust=0.95,vjust=0.5),
@@ -1593,6 +1606,8 @@ rbind(
   paste( formatC(length(unique(meta.la$id[meta.la$outdoors > 0 & !is.na(meta.la$outdoors)])), big.mark = ","), "total respondents w/ at least one outdoor activity (all 11.5 yrs, LA & RIV MSAs, all temps, outdoors)" ),
   paste( formatC(length(unique(meta.la$id[meta.la$outdoors > 0 & !is.na(meta.la$outdoors)])) / length(unique(meta.la$id)), big.mark = ","), "% of respondents w/ at least one outdoor activity (all 11.5 yrs, LA & RIV MSAs, all temps, outdoors)" ),
   paste0(formatC(sum(meta.la$TUACTDUR24[meta.la$temp > 27 & !is.na(meta.la$temp)] / 60, na.rm = T), big.mark = ",")," total hrs spent outdoors above 27 C Ta (all 11.5 yrs, LA & RIV MSAs, > 27 C Ta, outdoors)"),
+  paste0(formatC(sum(meta.la$TUACTDUR24[meta.la$temp > 33 & !is.na(meta.la$temp)] / 60, na.rm = T), big.mark = ",")," total hrs spent outdoors above 33 C Ta (all 11.5 yrs, LA & RIV MSAs, > 33 C Ta (extreme caution), outdoors)"),
+  paste0(formatC(length(unique(meta.la$id[meta.la$temp > 33 & !is.na(meta.la$temp)] / 60, na.rm = T)), big.mark = ",")," total ppl  outdoors above 33 C Ta (all 11.5 yrs, LA & RIV MSAs, > 33 C Ta (extreme caution), outdoors)"),
   paste0(round(sum(meta.la$TUACTDUR24[meta.la$temp > 27 & !is.na(meta.la$temp)], na.rm = T) / sum(meta.la$TUACTDUR24, na.rm = T), digits = 4) * 100,"% of total time is spent outdoors above 27 C Ta (all 11.5 yrs, LA & RIV MSAs, > 27 C Ta, outdoors)"),
   paste0(round(sum(meta.la$TUACTDUR24[meta.la$temp > 27 & !is.na(meta.la$temp)] * meta.la$weight[meta.la$temp > 27 & !is.na(meta.la$temp)], na.rm = T) / sum(meta.la$TUACTDUR24 * meta.la$weight, na.rm = T), digits = 4) * 100,"% (weighted) of total time is spent outdoors above 27 C Ta (all 11.5 yrs, LA & RIV MSAs, > 27 C Ta, outdoors)")
   
@@ -1820,15 +1835,15 @@ p.day <- ggplot(data=meta.f.pop2[!is.na(meta.f.pop2$MET.dur),], aes(x=cuttemp, y
   scale_x_discrete(name = "Apparent Temperature (?C)") +
   ggtitle("") +
   theme_bw() +
-  geom_text(data=day.t, aes(x=cuttemp, y=1.1, label=n), family = "Times New Roman",
+  geom_text(data=day.t, aes(x=cuttemp, y=1.1, label=n), family = my.font,
             colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2.4, vjust=.25) +
-  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = "Times New Roman",
+  #geom_text(data=act.t, aes(x=cuttemp, y=4800, label=p), family = my.font,
   #colour="black", inherit.aes=FALSE, parse=FALSE, angle = 90, size = 2, vjust=.95) +
   facet_grid(.~day) +
-  theme(plot.title = element_text(size = 12, family = "Times New Roman"),
+  theme(plot.title = element_text(size = 12, family = my.font),
         axis.title.y = element_text(size = 14),
         axis.title.x = element_text(size = 14),
-        text = element_text(size=12, family="Times New Roman"),
+        text = element_text(size=12, family=my.font),
         axis.text.y=element_text(color="black",size=11),
         axis.text.x=element_text(color="black",size=11,angle=90,hjust=0.95,vjust=0.5),
         panel.grid.major.y = element_line(colour="gray80"),
@@ -1847,6 +1862,14 @@ ggsave(paste0(today(),"_MET_exp_by_day_bxplt_300_weighted.tiff"), p.day, device 
 nrow(meta[meta$MET.exp27 > 0 & !is.na(meta$MET.exp27),])
 
 sum(ifelse(meta$MET.exp27 > 0 & !is.na(meta$MET.exp27), meta$weight, 0)) / 4147
+sum(ifelse(meta$MET.exp27[meta$msa.f == "LA" | meta$msa.f == "RIV"] > 0 & !is.na(meta$MET.exp27[meta$msa.f == "LA" | meta$msa.f == "RIV"]), meta$weight[meta$msa.f == "LA" | meta$msa.f == "RIV"], 0)) / 4147
+
+# weighted people LA metro engage in extreme caution heat index or above
+sum(ifelse(meta$temp.F[meta$msa.f == "LA" | meta$msa.f == "RIV"] > 90 & !is.na(meta$MET.exp27[meta$msa.f == "LA" | meta$msa.f == "RIV"]), meta$weight[meta$msa.f == "LA" | meta$msa.f == "RIV"], 0)) / 4147
+
+
+# LA metro region exposure 
 
 # percent of all people 
 (sum(ifelse(meta$MET.exp27 > 0 & !is.na(meta$MET.exp27), meta$weight, 0)) / 4147) / sum(metros$respop72016)
+(sum(ifelse(meta$MET.exp27[meta$msa.f == "LA" | meta$msa.f == "RIV"] > 0 & !is.na(meta$MET.exp27[meta$msa.f == "LA" | meta$msa.f == "RIV"]), meta$weight[meta$msa.f == "LA" | meta$msa.f == "RIV"], 0)) / 4147) / sum(metros$respop72016[metros$abbr == "LA" | metros$abbr == "RIV"])
